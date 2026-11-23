@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>A purple garden for Lolo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Caveat:wght@600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg1: #f3e8ff; --bg2: #d9bfff; --ink: #3b1670; --soft: #6b3fb0; --glow: #b57bff; --halo: #fff;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg1: #2a1250; --bg2: #14082c; --ink: #fbeeff; --soft: #d7b6ff; --glow: #a66bff; --halo: #14082c; }
+}
+:root[data-theme="dark"] { --bg1: #2a1250; --bg2: #14082c; --ink: #fbeeff; --soft: #d7b6ff; --glow: #a66bff; --halo: #14082c; }
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: radial-gradient(ellipse at 50% 30%, var(--bg1), var(--bg2));
+  color: var(--ink); font-family: "Fredoka", system-ui, sans-serif;
+  overflow: hidden; touch-action: manipulation; user-select: none; -webkit-user-select: none;
+}
+canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+.hero {
+  position: fixed; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center;
+  padding: 24px; pointer-events: none;
+}
+h1 { font-size: clamp(3rem, 14vw, 7.5rem); font-weight: 600; margin: 0; line-height: 1; text-shadow: 0 0 40px var(--glow); }
+.hint { font-family: "Caveat", cursive; font-size: clamp(1.4rem, 5vw, 2rem); color: var(--soft); margin: .6rem 0 0; transition: opacity .6s; }
+.count {
+  position: fixed; left: 0; right: 0; bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  text-align: center; color: var(--soft); font-size: 1rem; pointer-events: none;
+}
+.msg {
+  position: fixed; width: 230px; text-align: center; pointer-events: none;
+  font-family: "Caveat", cursive; font-size: 1.5rem; line-height: 1.15; color: var(--ink);
+  text-shadow: 0 0 6px var(--halo), 0 0 12px var(--halo), 0 0 3px var(--halo);
+  animation: rise 3.6s ease-out forwards; will-change: transform, opacity;
+}
+@keyframes rise {
+  0% { opacity: 0; transform: translate(-50%, 10px) scale(.9); }
+  12% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  75% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -50px) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) { .msg { animation-duration: 3.6s; } }
+</style>
+</head>
+<body>
+<canvas id="garden" aria-hidden="true"></canvas>
+<canvas id="fx" aria-hidden="true"></canvas>
+<div class="hero">
+  <h1 id="name"></h1>
+  <p class="hint" id="hint">tap anywhere to grow a flower</p>
+</div>
+<div class="count" id="count" aria-live="off"></div>
+<script>
+// Edit these two lines to make it yours.
+const NAME = "Lolo";
+const NOTE = "To my guardian angel, the most precious friend, I will always love you \u{1F49C}";
+
+document.title = "A purple garden for " + NAME;
+document.getElementById("name").textContent = NAME;
+
+const gc = document.getElementById("garden"), g = gc.getContext("2d");
+const fc = document.getElementById("fx"), f = fc.getContext("2d");
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let W, H, dpr;
+const placed = [];          // flowers already settled (capped)
+const growing = [];         // flowers still popping open
+const sparks = [];
+const MAX_PLACED = 3000;
+
+// Pre-draw flower sprites once, so each tap is just a cheap image draw.
+const hues = [262, 270, 278, 286, 294, 302];
+const sprites = [];
+const S = 160;
+for (let h = 0; h < hues.length; h++) {
+  for (let v = 0; v < 2; v++) {
+    const c = document.createElement("canvas");
+    c.width = c.height = S;
+    const x = c.getContext("2d");
+    const n = 5 + ((h + v) % 3);
+    x.translate(S / 2, S / 2);
+    x.rotate(Math.random() * 6.28);
+    x.shadowColor = "hsla(" + hues[h] + ",90%,70%,.8)";
+    x.shadowBlur = 10;
+    for (let i = 0; i < n; i++) {
+      x.save(); x.rotate(i * 6.2832 / n);
+      x.fillStyle = "hsl(" + hues[h] + ",85%," + (64 + v * 12) + "%)";
+      x.beginPath(); x.ellipse(0, -30, 17, 30, 0, 0, 6.2832); x.fill();
+      x.restore();
+    }
+    x.shadowBlur = 0;
+    x.fillStyle = "#fff3b8";
+    x.beginPath(); x.arc(0, 0, 11, 0, 6.2832); x.fill();
+    sprites.push(c);
+  }
+}
+
+function drawPlaced(i) {
+  const p = placed[i];
+  g.drawImage(sprites[p.s], p.x - p.d / 2, p.y - p.d / 2, p.d, p.d);
+}
+function resize() {
+  dpr = Math.min(devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  for (const c of [gc, fc]) { c.width = W * dpr; c.height = H * dpr; }
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  f.setTransform(dpr, 0, 0, dpr, 0, 0);
+  for (let i = 0; i < placed.length; i++) drawPlaced(i);
+}
+resize();
+addEventListener("resize", resize);
+
+for (let i = 0; i < (reduce ? 0 : 30); i++) {
+  sparks.push({ x: Math.random() * W, y: Math.random() * H, r: 1 + Math.random() * 2.2, v: .15 + Math.random() * .35, p: Math.random() * 6 });
+}
+
+let total = 0;
+const countEl = document.getElementById("count");
+const hintEl = document.getElementById("hint");
+const ease = t => { const s = 1.70158; t -= 1; return t * t * ((s + 1) * t + s) + 1; };
+
+function say(x, y) {
+  const el = document.createElement("div");
+  el.className = "msg";
+  el.textContent = NOTE;
+  el.style.left = Math.min(Math.max(x, 125), W - 125) + "px";
+  el.style.top = Math.max(y - 90, 20) + "px";
+  document.body.appendChild(el);
+  el.addEventListener("animationend", () => el.remove());
+  const msgs = document.querySelectorAll(".msg");
+  if (msgs.length > 6) msgs[0].remove();
+}
+
+function plant(x, y) {
+  growing.push({ x, y, t: performance.now(), d: 56 + Math.random() * 60, s: Math.floor(Math.random() * sprites.length) });
+  total++;
+  countEl.textContent = total.toLocaleString() + (total === 1 ? " flower" : " flowers") + " planted";
+  hintEl.style.opacity = 0;
+  say(x, y);
+}
+
+function frame(now) {
+  f.clearRect(0, 0, W, H);
+  for (const s of sparks) {
+    s.y -= s.v; if (s.y < -5) { s.y = H + 5; s.x = Math.random() * W; }
+    f.globalAlpha = .35 + .35 * Math.sin(now / 600 + s.p);
+    f.fillStyle = "#e6ccff";
+    f.beginPath(); f.arc(s.x, s.y, s.r, 0, 6.2832); f.fill();
+  }
+  f.globalAlpha = 1;
+  for (let i = growing.length - 1; i >= 0; i--) {
+    const o = growing[i];
+    const t = Math.min(1, (now - o.t) / 700);
+    const d = o.d * Math.max(0.01, ease(t));
+    f.drawImage(sprites[o.s], o.x - d / 2, o.y - d / 2, d, d);
+    if (t >= 1) {
+      placed.push({ x: o.x, y: o.y, d: o.d, s: o.s });
+      if (placed.length > MAX_PLACED) placed.shift();
+      drawPlaced(placed.length - 1);
+      growing.splice(i, 1);
+    }
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+addEventListener("pointerdown", e => plant(e.clientX, e.clientY));
+</script>
+</body>
+</html>
